@@ -70,6 +70,24 @@ vim.o.inccommand = 'split'
 vim.o.cursorline = true
 vim.o.scrolloff = 6
 vim.o.confirm = true
+vim.o.autoread = true
+
+-- [[ Code folding ]] (treesitter-based, falls back to no folds without a parser)
+vim.o.foldmethod = 'expr'
+vim.o.foldexpr = 'v:lua.vim.treesitter.foldexpr()'
+vim.o.foldtext = '' -- keep the first line syntax-highlighted instead of the old plain text
+vim.o.foldlevel = 99 -- everything open on file open
+vim.o.foldlevelstart = 99
+vim.o.foldnestmax = 6
+vim.opt.fillchars:append { fold = ' ' }
+-- za toggle · zc close · zo open · zR open all · zM close all · zj/zk move between folds
+vim.api.nvim_create_autocmd({ 'FocusGained', 'BufEnter' }, {
+  callback = function()
+    if vim.fn.mode() ~= 'c' then
+      vim.cmd 'checktime'
+    end
+  end,
+})
 
 -- [[ Basic Keymaps ]]
 --  See `:help vim.keymap.set()`
@@ -81,13 +99,7 @@ vim.keymap.set('n', '<Esc>', '<cmd>nohlsearch<CR>')
 -- Diagnostic keymaps
 vim.keymap.set('n', '<leader>q', vim.diagnostic.setloclist, { desc = 'Open diagnostic [Q]uickfix list' })
 
--- Exit terminal mode in the builtin terminal with a shortcut that is a bit easier
--- for people to discover. Otherwise, you normally need to press <C-\><C-n>, which
--- is not what someone will guess without a bit more experience.
---
--- NOTE: This won't work in all terminal emulators/tmux/etc. Try your own mapping
--- or just use <C-\><C-n> to exit terminal mode
-vim.keymap.set('t', '<Esc><Esc>', '<C-\\><C-n>', { desc = 'Exit terminal mode' })
+-- toggleterm handles terminal mode mappings via <A-h>
 
 -- Keybinds to make split navigation easier.
 --  Use CTRL+<hjkl> to switch between windows
@@ -146,18 +158,6 @@ rtp:prepend(lazypath)
 require('lazy').setup({
   { 'NMAC427/guess-indent.nvim', opts = {} },
 
-  -- {
-  --   'lewis6991/gitsigns.nvim',
-  --   opts = {
-  --     signs = {
-  --       add = { text = '+' },
-  --       change = { text = '~' },
-  --       delete = { text = '_' },
-  --       topdelete = { text = '‾' },
-  --       changedelete = { text = '~' },
-  --     },
-  --   },
-  -- },
   {
     'lewis6991/gitsigns.nvim',
     event = 'BufReadPre',
@@ -202,7 +202,7 @@ require('lazy').setup({
         map('n', '<leader>hb', gs.blame_line, { desc = 'git [b]lame line' })
         map('n', '<leader>hd', gs.diffthis, { desc = 'git [d]iff against index' })
         map('n', '<leader>hD', function() gs.diffthis '@' end, { desc = 'git [D]iff against last commit' })
-        map('n', '<leader>tb', gs.toggle_current_line_blame, { desc = '[T]oggle git [b]lame' })
+        map('n', '<leader>hB', gs.toggle_current_line_blame, { desc = 'Toggle git [B]lame' })
       end,
     },
     config = function(_, opts)
@@ -227,7 +227,7 @@ require('lazy').setup({
     opts = {
       -- delay between pressing a key and opening which-key (milliseconds)
       -- this setting is independent of vim.o.timeoutlen
-      delay = 0,
+      delay = 200,
       icons = {
         -- set icon mappings to true if you have a Nerd Font
         mappings = vim.g.have_nerd_font,
@@ -268,7 +268,8 @@ require('lazy').setup({
       -- Document existing key chains
       spec = {
         { '<leader>s', group = '[S]earch' },
-        { '<leader>t', group = '[T]erminal' }, -- Changed from '[T]oggle' to '[T]erminal'
+        { '<leader>t', group = '[T]erminal' },
+        { '<leader>g', group = '[G]it' },
         { '<leader>h', group = 'Git [H]unk', mode = { 'n', 'v' } },
       },
     },
@@ -488,11 +489,20 @@ require('lazy').setup({
       local servers = {
         clangd = { capabilities = { offsetEncoding = { 'utf-16' } } },
         pyright = {},
+        gopls = {},
+        ts_ls = {}, -- JavaScript / TypeScript (typescript-language-server)
         rust_analyzer = {
           settings = {
             ['rust-analyzer'] = {
-              checkOnSave = { command = 'clippy' },
               cargo = { allFeatures = true },
+              -- Run `cargo clippy` instead of `cargo check` for on-save diagnostics.
+              -- `checkOnSave` is a boolean; the command lives under `check.*`.
+              checkOnSave = true,
+              check = {
+                command = 'clippy',
+                allTargets = true, -- lint tests, benches and examples too
+                extraArgs = { '--no-deps' }, -- don't lint dependencies
+              },
             },
           },
         },
@@ -515,16 +525,17 @@ require('lazy').setup({
       })
       require('mason-tool-installer').setup { ensure_installed = ensure_installed }
 
+      -- mason-lspconfig v2 dropped the `handlers` option; server config now goes
+      -- through the native `vim.lsp.config()` API (Neovim 0.11+).
+      vim.lsp.config('*', { capabilities = capabilities })
+      for server_name, server in pairs(servers) do
+        vim.lsp.config(server_name, server)
+      end
+      vim.lsp.enable(vim.tbl_keys(servers))
+
       require('mason-lspconfig').setup {
         ensure_installed = {},
-        automatic_installation = false,
-        handlers = {
-          function(server_name)
-            local server = servers[server_name] or {}
-            server.capabilities = vim.tbl_deep_extend('force', {}, capabilities, server.capabilities or {})
-            require('lspconfig')[server_name].setup(server)
-          end,
-        },
+        automatic_enable = true,
       }
     end,
   },
@@ -633,7 +644,7 @@ require('lazy').setup({
       -- the rust implementation via `'prefer_rust_with_warning'`
       --
       -- See :h blink-cmp-config-fuzzy for more information
-      fuzzy = { implementation = 'lua' },
+      fuzzy = { implementation = 'prefer_rust_with_warning' },
 
       -- Shows a signature help window while you type arguments for a function
       signature = { enabled = true },
@@ -707,13 +718,10 @@ require('lazy').setup({
     build = ':TSUpdate',
     main = 'nvim-treesitter.configs',
     opts = {
-      ensure_installed = { 'bash', 'c', 'diff', 'html', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'python', 'query', 'rust', 'vim', 'vimdoc' },
+      ensure_installed = { 'bash', 'c', 'diff', 'go', 'gomod', 'gosum', 'gotmpl', 'html', 'javascript', 'jsdoc', 'json', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'python', 'query', 'rust', 'tsx', 'typescript', 'vim', 'vimdoc' },
       auto_install = false,
-      highlight = {
-        enable = true,
-        additional_vim_regex_highlighting = { 'ruby' },
-      },
-      indent = { enable = true, disable = { 'ruby' } },
+      highlight = { enable = true },
+      indent = { enable = true },
     },
   },
   -- The following comments only work if you have downloaded the kickstart repo, not just copy pasted the

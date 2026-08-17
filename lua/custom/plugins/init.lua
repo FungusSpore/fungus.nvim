@@ -4,12 +4,18 @@
 -- See the kickstart.nvim README for more information
 return {
   {
+    'famiu/bufdelete.nvim',
+    keys = { { '<leader>x', '<cmd>Bdelete<cr>', desc = 'Close buffer' } },
+  },
+  {
     'folke/trouble.nvim',
     dependencies = { 'nvim-tree/nvim-web-devicons' },
     keys = {
       {
         '<A-q>',
-        function() require('trouble').toggle 'diagnostics' end,
+        function()
+          require('trouble').toggle 'diagnostics'
+        end,
         desc = 'Toggle Trouble diagnostics',
       },
     },
@@ -24,10 +30,10 @@ return {
     'sindrets/diffview.nvim',
     dependencies = { 'nvim-lua/plenary.nvim' },
     keys = {
-      { '<leader>gd', '<cmd>DiffviewOpen<cr>',            desc = '[G]it [D]iff' },
-      { '<leader>gh', '<cmd>DiffviewFileHistory %<cr>',   desc = '[G]it file [H]istory' },
-      { '<leader>gH', '<cmd>DiffviewFileHistory<cr>',     desc = '[G]it repo [H]istory' },
-      { '<leader>gx', '<cmd>DiffviewClose<cr>',           desc = '[G]it diff close' },
+      { '<leader>gd', '<cmd>DiffviewOpen<cr>', desc = '[G]it [D]iff' },
+      { '<leader>gh', '<cmd>DiffviewFileHistory %<cr>', desc = '[G]it file [H]istory' },
+      { '<leader>gH', '<cmd>DiffviewFileHistory<cr>', desc = '[G]it repo [H]istory' },
+      { '<leader>gx', '<cmd>DiffviewClose<cr>', desc = '[G]it diff close' },
     },
     opts = {},
   },
@@ -47,17 +53,6 @@ return {
       },
     },
   },
-  -- {
-  --   'mrcjkb/rustaceanvim',
-  --   version = '^5', -- Recommended
-  --   lazy = false, -- This plugin is already lazy
-  --   config = function()
-  --     local bufnr = vim.api.nvim_get_current_buf()
-  --     vim.keymap.set('n', '<leader>a', function()
-  --       vim.cmd.RustLsp 'codeAction'
-  --     end, { silent = true, buffer = bufnr })
-  --   end,
-  -- },
   { -- File Explorer & Drawer Wrapper
     'nvim-tree/nvim-tree.lua',
     version = '*',
@@ -75,7 +70,7 @@ return {
           preserve_window_proportions = true,
         },
         actions = {
-          open_file = { resize_window = false },
+          open_file = { resize_window = false, quit_on_open = true },
         },
         hijack_directories = {
           enable = false,
@@ -85,12 +80,12 @@ return {
 
       -- 2. SETUP DRAWER
       local drawer = require 'nvim-drawer'
-      drawer.setup({})
+      drawer.setup {}
 
       -- ==========================================
       -- DRAWER 1: FILE TREE
       -- ==========================================
-      drawer.create_drawer {
+      local tree_drawer = drawer.create_drawer {
         size = 25,
         position = 'right',
         should_reuse_previous_bufnr = false,
@@ -125,78 +120,122 @@ return {
         end,
       }
 
-      -- ==========================================
-      -- DRAWER 2: TERMINAL
-      -- ==========================================
-      drawer.create_drawer {
-        position = 'float',
-        win_config = {
-          width = '98%',
-          height = '95%',
-          border = 'rounded',
-          anchor = 'CC',
-          margin = 1,
-        },
-
-        does_own_buffer = function(context)
-          return context.bufname:match 'term://' ~= nil
+      -- Close the drawer when nvim-tree opens a file
+      vim.api.nvim_create_autocmd('User', {
+        pattern = 'NvimTreeFileOpened',
+        callback = function()
+          tree_drawer.close()
         end,
-
-        on_vim_enter = function(event)
-          -- [FIX 1] Commented this out so it doesn't open on startup
-          -- event.instance.open { focus = false }
-
-          -- Normal Mode Toggle
-          vim.keymap.set('n', '<A-h>', function()
-            event.instance.focus_or_toggle()
-          end, { desc = 'Toggle Terminal' })
-
-          -- [FIX 2] Terminal Mode Toggle
-          -- We use a Lua function so we can use 'event.instance' directly
-          vim.keymap.set('t', '<A-h>', function()
-            -- 1. Exit Terminal Mode (equivalent to <C-\><C-n>)
-            vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<C-\\><C-n>', true, false, true), 'n', false)
-
-            -- 2. Toggle the specific drawer instance we are already configured for
-            -- We wrap this in schedule to ensure the mode switch happens first
-            vim.schedule(function()
-              event.instance.focus_or_toggle()
-            end)
-          end)
-
-          -- Terminal Controls
-          vim.keymap.set('n', '<leader>tt', function()
-            event.instance.open { mode = 'new' }
-          end, { desc = '[N]ew Terminal' })
-
-          vim.keymap.set('n', '<leader>tn', function()
-            event.instance.go(1)
-          end, { desc = 'Next [T]erminal' })
-
-          vim.keymap.set('n', '<leader>tp', function()
-            event.instance.go(-1)
-          end, { desc = 'Previous [T]erminal' })
-
-          vim.keymap.set('n', '<leader>tz', function()
-            event.instance.toggle_zoom()
-          end, { desc = '[Z]oom Terminal' })
+      })
+    end,
+  },
+  {
+    'MeanderingProgrammer/render-markdown.nvim',
+    dependencies = { 'nvim-treesitter/nvim-treesitter', 'nvim-tree/nvim-web-devicons' },
+    ft = { 'markdown' },
+    opts = {},
+  },
+  {
+    'akinsho/toggleterm.nvim',
+    version = '*',
+    event = 'BufEnter',
+    opts = {
+      open_mapping = '<A-h>',
+      direction = 'float',
+      float_opts = {
+        border = 'rounded',
+        width = function()
+          return math.floor(vim.o.columns * 0.97)
         end,
-
-        on_did_create_buffer = function()
-          vim.fn.termopen(os.getenv 'SHELL')
+        height = function()
+          return math.floor(vim.o.lines * 0.95)
         end,
+      },
+      highlights = {
+        Normal = { guibg = '#1f2335' },
+        NormalFloat = { guibg = '#1f2335' },
+        FloatBorder = { guifg = '#3b4261', guibg = '#1f2335' },
+      },
+      on_open = function(term)
+        vim.opt_local.number = false
+        vim.opt_local.relativenumber = false
+        vim.opt_local.signcolumn = 'no'
+        vim.opt_local.statuscolumn = ''
+        -- Session label bottom-right: shows current id and total count
+        local function update_label()
+          local all = require('toggleterm.terminal').get_all()
+          vim.wo.statusline = '%=%#Comment#  Terminal ' .. term.id .. ' / ' .. #all .. '  %*'
+        end
+        update_label()
+        -- Exit terminal mode with <A-h> (close) or <Esc><Esc> (normal mode, keep open)
+        vim.keymap.set('t', '<A-h>', '<cmd>ToggleTerm<cr>', { buffer = term.bufnr })
+        vim.keymap.set('t', '<Esc><Esc>', '<C-\\><C-n>', { buffer = term.bufnr })
+      end,
+    },
+    config = function(_, opts)
+      require('toggleterm').setup(opts)
 
-        on_did_open_buffer = function()
-          vim.opt_local.number = false
-          vim.opt_local.relativenumber = false
-          vim.opt_local.signcolumn = 'no'
-          vim.opt_local.statuscolumn = ''
-        end,
+      local tt = require 'toggleterm.terminal'
+      local Terminal = tt.Terminal
 
-        on_did_open = function()
-          vim.cmd '$'
-        end,
-      }
+      local function create_term()
+        -- find next unused ID (include hidden terminals so we never reuse one)
+        local used = {}
+        for _, t in ipairs(tt.get_all(true)) do
+          used[t.id] = true
+        end
+        local id = 1
+        while used[id] do
+          id = id + 1
+        end
+        Terminal:new({ direction = 'float', id = id }):toggle()
+      end
+
+      -- Cycle focus across ALL terminals (floats hide their siblings, so we
+      -- must include hidden ones), closing the current float before opening
+      -- the next.
+      local function nav(dir)
+        local terms = vim.tbl_values(tt.get_all(true))
+        if #terms < 2 then
+          return
+        end
+        table.sort(terms, function(a, b)
+          return a.id < b.id
+        end)
+        local cur_id = tt.get_focused_id() or terms[1].id
+        local idx = 1
+        for i, t in ipairs(terms) do
+          if t.id == cur_id then
+            idx = i
+            break
+          end
+        end
+        local nxt = terms[((idx - 1 + dir) % #terms) + 1]
+        if nxt.id == cur_id then
+          return
+        end
+        local cur = tt.get(cur_id, true)
+        if cur and cur:is_open() then
+          cur:close()
+        end
+        nxt:open()
+      end
+
+      -- When there's no second terminal yet, create one (and focus it);
+      -- once two exist, just cycle between them.
+      local function next_or_create()
+        if #tt.get_all(true) < 2 then
+          create_term()
+        else
+          nav(1)
+        end
+      end
+
+      vim.keymap.set('n', '<leader>tt', create_term, { desc = 'New terminal' })
+      vim.keymap.set('n', '<leader>tn', next_or_create, { desc = 'Next/create terminal' })
+      vim.keymap.set('n', '<leader>tp', function()
+        nav(-1)
+      end, { desc = 'Prev terminal' })
     end,
   },
 }
