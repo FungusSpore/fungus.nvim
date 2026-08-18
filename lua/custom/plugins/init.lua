@@ -8,6 +8,23 @@ return {
     keys = { { '<leader>x', '<cmd>Bdelete<cr>', desc = 'Close buffer' } },
   },
   {
+    -- Peek definitions/references in a preview pane instead of jumping away.
+    'dnlhc/glance.nvim',
+    cmd = 'Glance',
+    keys = {
+      { 'gpd', '<cmd>Glance definitions<cr>', desc = 'Peek definitions' },
+      { 'gpr', '<cmd>Glance references<cr>', desc = 'Peek references' },
+      { 'gpi', '<cmd>Glance implementations<cr>', desc = 'Peek implementations' },
+      { 'gpt', '<cmd>Glance type_definitions<cr>', desc = 'Peek type definitions' },
+    },
+    opts = {
+      border = { enable = true },
+      theme = { enable = true, mode = 'auto' },
+      list = { position = 'right', width = 0.4 },
+      folds = { folded = false },
+    },
+  },
+  {
     'folke/trouble.nvim',
     dependencies = { 'nvim-tree/nvim-web-devicons' },
     keys = {
@@ -133,7 +150,15 @@ return {
     'MeanderingProgrammer/render-markdown.nvim',
     dependencies = { 'nvim-treesitter/nvim-treesitter', 'nvim-tree/nvim-web-devicons' },
     ft = { 'markdown' },
-    opts = {},
+    opts = {
+      -- LSP hover buffers are filetype markdown, so this plugin renders them too.
+      -- `anti_conceal` un-hides whatever line the cursor is on, and the hover
+      -- cursor starts on the opening ``` — which is why the fence showed.
+      anti_conceal = { enabled = false },
+      win_options = {
+        concealcursor = { rendered = 'nvic' },
+      },
+    },
   },
   {
     'akinsho/toggleterm.nvim',
@@ -142,19 +167,31 @@ return {
     opts = {
       open_mapping = '<A-h>',
       direction = 'float',
+      -- toggleterm darkens the terminal background by default, which paints an
+      -- opaque box over Ghostty's background-opacity. Leave it unpainted.
+      shade_terminals = false,
       float_opts = {
-        border = 'rounded',
+        -- 'curved' uses toggleterm's own rounded corner characters
+        border = 'curved',
+        -- winblend blends the float against the *buffer behind it*, not against
+        -- the desktop. Real transparency comes from the unpainted background
+        -- below plus Ghostty's background-opacity, so keep this at 0.
+        winblend = 0,
+        -- width/height are the *inside* of the float; the border adds a row and
+        -- column on each side, and the command line owns the bottom row. Size
+        -- against what's actually left or the bottom border lands off-screen.
         width = function()
-          return math.floor(vim.o.columns * 0.97)
+          return math.floor((vim.o.columns - 2) * 0.97)
         end,
         height = function()
-          return math.floor(vim.o.lines * 0.95)
+          return math.floor((vim.o.lines - vim.o.cmdheight - 2) * 0.95)
         end,
-      },
-      highlights = {
-        Normal = { guibg = '#1f2335' },
-        NormalFloat = { guibg = '#1f2335' },
-        FloatBorder = { guifg = '#3b4261', guibg = '#1f2335' },
+        col = function()
+          return math.floor((vim.o.columns - 2) * 0.015)
+        end,
+        row = function()
+          return math.floor((vim.o.lines - vim.o.cmdheight - 2) * 0.025)
+        end,
       },
       on_open = function(term)
         vim.opt_local.number = false
@@ -173,7 +210,28 @@ return {
       end,
     },
     config = function(_, opts)
+      -- Float colours follow the active colorscheme instead of a hard-coded
+      -- palette: transparent background, visible themed border.
+      local function float_highlights()
+        local ok, palette = pcall(function()
+          return require('catppuccin.palettes').get_palette()
+        end)
+        return {
+          NormalFloat = { guibg = 'NONE' },
+          FloatBorder = { guifg = ok and palette.blue or '#8caaee', guibg = 'NONE' },
+        }
+      end
+
+      opts.highlights = float_highlights()
       require('toggleterm').setup(opts)
+
+      -- Re-theme the float when the colorscheme changes
+      vim.api.nvim_create_autocmd('ColorScheme', {
+        group = vim.api.nvim_create_augroup('toggleterm-colors', { clear = true }),
+        callback = function()
+          require('toggleterm').setup(vim.tbl_extend('force', opts, { highlights = float_highlights() }))
+        end,
+      })
 
       local tt = require 'toggleterm.terminal'
       local Terminal = tt.Terminal

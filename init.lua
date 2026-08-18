@@ -15,7 +15,7 @@ vim.g.loaded_netrwPlugin = 1
 -- Only run this code if we are inside Neovide
 if vim.g.neovide then
   -- 1. Font configuration (Neovide handles fonts differently than terminal)
-  vim.o.guifont = 'JetBrainsMono Nerd Font:h14'
+  vim.o.guifont = '0xProto Nerd Font:h14'
 
   -- 2. The Cool Cursor Trails (The "Railgun" effect)
   vim.g.neovide_cursor_vfx_mode = 'railgun' -- options: railgun, torpedo, pixiedust, sonicboom, ripple, wireframe
@@ -25,25 +25,20 @@ if vim.g.neovide then
   vim.g.neovide_cursor_trail_size = 0.8
 
   -- 4. Window Transparency
-  vim.g.neovide_transparency = 0.9
-end
+  -- `neovide_transparency` was renamed to `neovide_opacity`; the old name is
+  -- ignored by current Neovide, so set the new one.
+  vim.g.neovide_opacity = 0.9
 
--- Patch for nvim 0.12 compatibility with nvim-treesitter:
--- nvim 0.12 changed captures to table<integer, TSNode[]> (arrays), but
--- nvim-treesitter still expects single TSNode values. Unwrap if needed.
-local _get_node_text = vim.treesitter.get_node_text
-vim.treesitter.get_node_text = function(node, source, opts)
-  if node == nil then
-    return ''
-  end
-  -- Unwrap TSNode array (nvim 0.12+ returns captures as arrays)
-  if type(node) == 'table' then
-    node = node[1]
-  end
-  if node == nil then
-    return ''
-  end
-  return _get_node_text(node, source, opts)
+  -- 5. macOS niceties
+  vim.g.neovide_input_macos_option_key_is_meta = 'only_left' -- keep right-Alt for accented chars
+  vim.g.neovide_scroll_animation_length = 0.3
+  vim.g.neovide_remember_window_size = true
+
+  -- Cmd+C / Cmd+V, which the terminal would normally handle for you
+  vim.keymap.set({ 'n', 'v' }, '<D-c>', '"+y', { desc = 'Copy to system clipboard' })
+  vim.keymap.set({ 'n', 'v' }, '<D-v>', '"+p', { desc = 'Paste from system clipboard' })
+  vim.keymap.set('i', '<D-v>', '<C-r>+', { desc = 'Paste from system clipboard' })
+  vim.keymap.set('c', '<D-v>', '<C-r>+', { desc = 'Paste from system clipboard' })
 end
 
 vim.opt.termguicolors = true
@@ -71,6 +66,11 @@ vim.o.cursorline = true
 vim.o.scrolloff = 6
 vim.o.confirm = true
 vim.o.autoread = true
+
+-- Rounded borders for every floating window (hover, signature help, lazy,
+-- mason, ...). Without this nvim draws them borderless, so an opaque float
+-- sits on the transparent editor with nothing marking where it starts.
+vim.o.winborder = 'rounded'
 
 -- [[ Code folding ]] (treesitter-based, falls back to no folds without a parser)
 vim.o.foldmethod = 'expr'
@@ -431,7 +431,11 @@ require('lazy').setup({
           -- Jump to the type of the word under your cursor.
           map('gt', require('telescope.builtin').lsp_type_definitions, '[G]oto [T]ype Definition')
 
-          map('K', vim.lsp.buf.hover, 'Hover Documentation')
+          -- Hover is focusable: press K a second time to jump inside the float and
+          -- scroll it. Cap the size so long rustdoc blocks stay readable.
+          map('K', function()
+            vim.lsp.buf.hover { max_width = 100, max_height = 30, border = 'rounded' }
+          end, 'Hover Documentation')
 
           -- The following two autocommands are used to highlight references of the
           -- word under your cursor when your cursor rests there for a little while.
@@ -492,9 +496,37 @@ require('lazy').setup({
         gopls = {},
         ts_ls = {}, -- JavaScript / TypeScript (typescript-language-server)
         rust_analyzer = {
+          -- lspconfig's stock root_dir shells out to `rustc` to find the sysroot.
+          -- When no toolchain is installed that throws inside the FileType
+          -- autocmd, which aborts the whole chain — including the one that turns
+          -- on treesitter highlighting. Resolve the root ourselves instead.
+          -- The *topmost* Cargo.toml is the cargo workspace root. Stopping at the
+          -- nearest one hands rust-analyzer a single member crate, which breaks
+          -- cross-crate analysis in a `members = ["crates/*"]` layout.
+          root_dir = function(bufnr, on_dir)
+            local fname = vim.api.nvim_buf_get_name(bufnr)
+            local root
+            if fname ~= '' then
+              for dir in vim.fs.parents(fname) do
+                if vim.uv.fs_stat(dir .. '/Cargo.toml') then
+                  root = dir
+                end
+              end
+            end
+            on_dir(root or vim.fs.root(bufnr, { 'rust-project.json', '.git' }))
+          end,
           settings = {
             ['rust-analyzer'] = {
               cargo = { allFeatures = true },
+              -- Richer hover: inline struct fields, enum variants, trait items and
+              -- memory layout instead of just the signature line.
+              hover = {
+                actions = { enable = true, references = { enable = true } },
+                documentation = { enable = true, keywords = true },
+                links = { enable = true },
+                memoryLayout = { enable = true, niches = true },
+                show = { fields = 10, enumVariants = 10, traitAssocItems = 5 },
+              },
               -- Run `cargo clippy` instead of `cargo check` for on-save diagnostics.
               -- `checkOnSave` is a boolean; the command lives under `check.*`.
               checkOnSave = true,
@@ -656,20 +688,55 @@ require('lazy').setup({
     -- change the command in the config to whatever the name of that colorscheme is.
     --
     -- If you want to see what colorschemes are already installed, you can use `:Telescope colorscheme`.
-    'folke/tokyonight.nvim',
+    'catppuccin/nvim',
+    name = 'catppuccin', -- repo is `nvim`, so name it explicitly
     priority = 1000, -- Make sure to load this before all the other start plugins.
     config = function()
-      ---@diagnostic disable-next-line: missing-fields
-      require('tokyonight').setup {
+      require('catppuccin').setup {
+        flavour = 'frappe', -- latte (light), frappe, macchiato, mocha (darkest)
+        background = { light = 'latte', dark = 'frappe' },
+        -- Leave Normal unpainted so Ghostty's `background-opacity` shows
+        -- through. With this false, catppuccin fills every cell with its own
+        -- opaque base color and the terminal's transparency is invisible.
+        transparent_background = true,
+        no_italic = false,
         styles = {
-          comments = { italic = false }, -- Disable italics in comments
+          comments = {}, -- Disable italics in comments
+        },
+        -- `transparent_background` deliberately leaves floats opaque, which puts
+        -- a solid slab on top of the see-through editor. Unpaint them too and
+        -- give the border a visible colour so the edge reads as a window.
+        custom_highlights = function(colors)
+          return {
+            NormalFloat = { bg = 'NONE' },
+            FloatBorder = { fg = colors.blue, bg = 'NONE' },
+            FloatTitle = { fg = colors.blue, bg = 'NONE', style = { 'bold' } },
+          }
+        end,
+        -- Themed highlights for the plugins this config actually installs.
+        integrations = {
+          blink_cmp = true,
+          dap = true,
+          dap_ui = true,
+          gitsigns = true,
+          indent_blankline = { enabled = true, scope_color = 'lavender' },
+          mason = true,
+          mini = { enabled = true },
+          native_lsp = { enabled = true, underlines = { errors = { 'undercurl' } } },
+          nvimtree = true,
+          render_markdown = true,
+          telescope = { enabled = true },
+          todo_comments = true,
+          treesitter = true,
+          trouble = true,
+          which_key = true,
         },
       }
 
       -- Load the colorscheme here.
       -- Like many other themes, this one has different styles, and you could load
-      -- any other, such as 'tokyonight-storm', 'tokyonight-moon', or 'tokyonight-day'.
-      vim.cmd.colorscheme 'tokyonight-storm'
+      -- any other, such as 'catppuccin-mocha' or 'catppuccin-latte'.
+      vim.cmd.colorscheme 'catppuccin-frappe'
     end,
   },
 
@@ -714,15 +781,47 @@ require('lazy').setup({
     end,
   },
   { -- Highlight, edit, and navigate code
+    -- NOTE: the `main` branch is a ground-up rewrite that dropped the old
+    -- `nvim-treesitter.configs` module system (no more `highlight`/`indent`
+    -- opts). Highlighting and folding now come from Neovim itself; this
+    -- plugin only installs parsers/queries and provides `indentexpr`.
     'nvim-treesitter/nvim-treesitter',
+    branch = 'main',
+    lazy = false,
     build = ':TSUpdate',
-    main = 'nvim-treesitter.configs',
-    opts = {
-      ensure_installed = { 'bash', 'c', 'diff', 'go', 'gomod', 'gosum', 'gotmpl', 'html', 'javascript', 'jsdoc', 'json', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'python', 'query', 'rust', 'tsx', 'typescript', 'vim', 'vimdoc' },
-      auto_install = false,
-      highlight = { enable = true },
-      indent = { enable = true },
-    },
+    config = function()
+      local ts = require 'nvim-treesitter'
+      ts.setup {}
+
+      local ensure_installed = {
+        'bash', 'c', 'diff', 'go', 'gomod', 'gosum', 'gotmpl', 'html',
+        'javascript', 'jsdoc', 'json', 'lua', 'luadoc', 'markdown',
+        'markdown_inline', 'python', 'query', 'rust', 'tsx', 'typescript',
+        'vim', 'vimdoc',
+      }
+
+      local installed = ts.get_installed 'parsers'
+      local missing = vim.tbl_filter(function(lang)
+        return not vim.tbl_contains(installed, lang)
+      end, ensure_installed)
+      if #missing > 0 then
+        ts.install(missing)
+      end
+
+      -- Start highlighting (and experimental indenting) for any filetype we
+      -- actually have a parser for. `pcall` keeps buffers without a parser
+      -- from throwing on every open.
+      vim.api.nvim_create_autocmd('FileType', {
+        group = vim.api.nvim_create_augroup('kickstart-treesitter', { clear = true }),
+        callback = function(args)
+          local lang = vim.treesitter.language.get_lang(vim.bo[args.buf].filetype)
+          if not lang or not pcall(vim.treesitter.start, args.buf, lang) then
+            return
+          end
+          vim.bo[args.buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+        end,
+      })
+    end,
   },
   -- The following comments only work if you have downloaded the kickstart repo, not just copy pasted the
   -- init.lua. If you want these files, they are in the repository, so you can just download them and
